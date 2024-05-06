@@ -7,7 +7,6 @@ import wandb
 import os
 from dotenv import load_dotenv
 import pandas as pd 
-import bittensor as bt
 
 # Load the API key from environment variable
 load_dotenv()
