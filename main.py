@@ -7,6 +7,7 @@ import wandb
 import os
 from dotenv import load_dotenv
 import pandas as pd 
+import bittensor as bt
 
 # Load the API key from environment variable
 load_dotenv()
@@ -21,7 +22,7 @@ def wandb_login(api_key):
     wandb.login(key=api_key)
 
 # Function to fetch hardware specs from wandb
-def fetch_hardware_specs(api):
+def fetch_hardware_specs(api, hotkeys):
     db_specs_dict = {}
     project_path = f"{PUBLIC_WANDB_ENTITY}/{PUBLIC_WANDB_NAME}"
     runs = api.runs(project_path)
@@ -31,8 +32,9 @@ def fetch_hardware_specs(api):
             hotkey = run_config.get('hotkey')
             details = run_config.get('specs')
             role = run_config.get('role')
-            if hotkey and details and role == 'miner':
-                db_specs_dict[hotkey] = details
+            if hotkey in hotkeys and details and role == 'miner':
+                index = hotkeys.index(hotkey)
+                db_specs_dict[index] = (hotkey, details)
     except Exception as e:
         print(f"An error occurred while getting specs from wandb: {e}")
     return db_specs_dict
@@ -75,13 +77,14 @@ def get_allocated_hotkeys(api):
 
 def display_hardware_specs(specs_details, allocated_keys):
     # Compute all necessary data before setting up the tabs
-    column_headers = ["Hotkey", "GPU Name", "GPU Capacity (GiB)", "GPU Count", "CPU Count", "RAM (GiB)", "Disk Space (GiB)", "Status"]
+    column_headers = ["UID", "Hotkey", "GPU Name", "GPU Capacity (GiB)", "GPU Count", "CPU Count", "RAM (GiB)", "Disk Space (GiB)", "Status"]
     table_data = []
 
     gpu_instances = {}
     total_gpu_counts = {}
 
-    for hotkey, details in specs_details.items():
+    for index in sorted(specs_details.keys()):
+        hotkey, details = specs_details[index]
         if details:
             try:
                 gpu_miner = details['gpu']
@@ -99,19 +102,10 @@ def display_hardware_specs(specs_details, allocated_keys):
                 hard_disk = "{:.2f}".format(hard_disk_miner['free'] / 1024.0 ** 3)  # Convert bytes to GiB
 
                 row = [hotkey[:6] + ('...'), gpu_name, gpu_capacity, str(gpu_count), str(cpu_count), ram, hard_disk, "Pending"]
-
-                # Update summaries for GPU instances and total counts
-                if isinstance(gpu_name, str) and isinstance(gpu_count, int):
-                    row = [hotkey[:6] + ('...'), gpu_name, gpu_capacity, str(gpu_count), str(cpu_count), ram, hard_disk, "Pending"]
-                    gpu_key = (gpu_name, gpu_count)
-                    gpu_instances[gpu_key] = gpu_instances.get(gpu_key, 0) + 1
-                    total_gpu_counts[gpu_name] = total_gpu_counts.get(gpu_name, 0) + gpu_count
-                else:
-                    row = [hotkey[:6] + ('...'), "No GPU data"] + ["N/A"] * 6
             except (KeyError, IndexError, TypeError):
-                row = [hotkey[:6] + ('...'), "Invalid details"] + ["N/A"] * 6
+                row = [str(index), hotkey[:6] + ('...'), "Invalid details"] + ["N/A"] * 6
         else:
-            row = [hotkey[:6] + ('...')] + ["No details available"] + ["N/A"] * 6
+            row = [str(index), hotkey[:6] + ('...')] + ["No details available"] + ["N/A"] * 6
 
         row[-1] = "Res." if hotkey in allocated_keys else "Avail."  # Allocation check
         table_data.append(row)
@@ -142,7 +136,15 @@ api = wandb.Api()
 # Streamlit App Layout
 st.title('Compute Subnet - Hardware Specifications')
 
+# Fetching data with loading indicator
+with st.spinner('Fetching metagraph data...'):
+    metagraph = bt.metagraph(netuid=27)
+    hotkeys = metagraph.hotkeys
+
 # Fetch specs and display them
-specs_details = fetch_hardware_specs(api)
-allocated_keys = get_allocated_hotkeys(api)
+with st.spinner('Fetching hardware specifications...'):
+    specs_details = fetch_hardware_specs(api, hotkeys)
+    allocated_keys = get_allocated_hotkeys(api)
+
+# Display fetched hardware specs
 display_hardware_specs(specs_details, allocated_keys)
